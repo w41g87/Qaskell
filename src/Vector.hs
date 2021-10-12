@@ -1,15 +1,23 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE InstanceSigs #-}
+
 module Vector where
 
 import Tensor
 import Data.Monoid
 import Data.Maybe
+import Data.Bifunctor
+import Data.Complex
+import Data.Biapplicative
+import Helper
+import Data.Either
 
 data Vector a = Scalar a | Row [Vector a] | Column [Vector a]
+    deriving (Show)
 
 -- This Eq implementation ignores structural differences
-instance Eq a => Eq (Vector a) where
+instance (Eq a) => Eq (Vector a) where
     x == y = wx == wy && hx == hy && go 0 0
         where
             wx = width x
@@ -19,7 +27,7 @@ instance Eq a => Eq (Vector a) where
             go i j
                 | i == hx = True
                 | j == wx = go (i + 1) 0
-                | otherwise = atMaybe x (i, j) == atMaybe y (i, j) && go i (j + 1)
+                | otherwise = atM x (i, j) == atM y (i, j) && go i (j + 1)
 
 instance Functor Vector where
     fmap f (Scalar s) = Scalar $ f s
@@ -39,10 +47,11 @@ instance Monad Vector where
     Column c >>= f = Column $ map (>>= f) c
 
 instance Num a => Num (Vector a) where
-    Scalar x + (Scalar y) = Scalar $ x + y
     Row x + (Row y) = Row $ zipWith (+) x y
     Column x + (Column y) = Column $ zipWith (+) x y
-    _ + _ = error "Vector addition: dimension mismatch"
+    Scalar x + y = fmap (+ x) y
+    x + (Scalar y) = fmap (+ y) x
+    _+_ = error "Vector Addition: Direction mismatch"
     Scalar x * y = fmap (* x) y
     x * Scalar y = fmap (* y) x
     Row x * (Column y) = getSum $ foldMap Sum $ zipWith (*) x y
@@ -69,7 +78,7 @@ instance (Num a) => Semigroup (Vector a) where
 instance (Num a) => Monoid (Vector a) where
     mempty = Scalar 1
 
-instance (forall a. Monoid (Vector a)) => Tensor Vector where
+instance Tensor Vector where
     norm t = (/ (sqrt.getSum $ foldMap (Sum . (**2) . abs) t)) <$> t
     fromList xs dim = go (foldr (con . Scalar) (Column []) xs) dim
         where
@@ -79,7 +88,7 @@ instance (forall a. Monoid (Vector a)) => Tensor Vector where
                 | otherwise = go (Row $ take (l `div` fromIntegral n) c) dim
                     `con` go (Column $ drop (l `div` fromIntegral n) c) (n - 1)
                 where l = length c
-            
+
             go (Row r) n
                 | n == 1 = Row [go (Column r) dim]
                 | l <= fromIntegral dim = Row r
@@ -94,10 +103,112 @@ instance (forall a. Monoid (Vector a)) => Tensor Vector where
     rank (Row (r:rs)) = rank r + 1
     rank (Column (c:cs)) = rank c + 1
 
+    isSquare t
+        | (Scalar _) <- t = True
+        | (Column c) <- t = getAll $ go (Column c) (length c)
+        | (Row r) <- t = getAll $ go (Row r) (length r)
+        where
+            go (Column c) l
+                | length c == l = foldMap (`go` l) c
+                | otherwise = All False
+            go (Row r) l
+                | length r == l = foldMap (`go` l) r
+                | otherwise = All False
+            go (Scalar _) _ = All True
+
+instance QuantumRegister Vector where
+    getProb i v
+        | i < 0 || i >= rank v = Left "Index out of bounds"
+        | not (isSquare v) = Left "Invalid Quantum Register"
+        | otherwise = Right $ bimap getSum getSum $ go i v
+        where
+            go 0 v = (foldMap (Sum . (**2). magnitude) (Vector.head v)
+                , foldMap (Sum . (**2). magnitude) (Vector.last v))
+            go i v = ((<>), (<>)) <<*>> nextH <<*>> nextL
+                where
+                    nextH = go (i - 1) (Vector.head v)
+                    nextL = go (i - 1) (Vector.last v)
+
+    initQubit zero one
+        | abs zero ** 2 + abs one ** 2 == 1 = Right $ fromList [zero, one] 2
+        | otherwise = Left "Sum of probability of |0> and |1> state does not equal to 1"
+
+    initQubit0 = fromList [1, 0] 2
+
+    initNumQubit0 n
+        | n < 1 = Left "Invalid qubit number"
+        | otherwise = Right $ foldr (|*|) initQubit0 $ replicate (fromIntegral n - 1) initQubit0
+
+    toQuantumRegister q
+        | isLeft num = Left "Input list length is not a power of 2"
+        | otherwise = Right . norm $ fromList q 2
+        where num = integralLog 2 (length q)
+
+    pauliX = Row [
+                Column [Scalar (0 :+ 0), Scalar (1 :+ 0)],
+                Column [Scalar (1 :+ 0), Scalar (0 :+ 0)]
+            ]
+
+    pauliY = Row [
+                Column [Scalar (0 :+ 0), Scalar (0 :+ 1)],
+                Column [Scalar (0 :+ (-1)), Scalar (0 :+ 0)]
+            ]
+
+    pauliZ = Row [
+                Column [Scalar (1 :+ 0), Scalar (0 :+ 0)],
+                Column [Scalar (0 :+ 0), Scalar ((-1) :+ 0)]
+            ]
+
+    pauliId = Row [
+                Column [Scalar (1 :+ 0), Scalar (0 :+ 0)],
+                Column [Scalar (0 :+ 0), Scalar (1 :+ 0)]
+            ]
+
+    hadamard = Row [
+                Column [Scalar (1 / sqrt 2 :+ 0), Scalar (1 / sqrt 2 :+ 0)],
+                Column [Scalar (1 / sqrt 2 :+ 0), Scalar ((-1) / sqrt 2 :+ 0)]
+            ]
+
+    mask0 = Row [
+                Column[Scalar (1 :+ 0), Scalar (0 :+ 0)],
+                Column[Scalar (0 :+ 0), Scalar (0 :+ 0)]
+            ]
+
+    mask1 = Row [
+                Column[Scalar (0 :+ 0), Scalar (0 :+ 0)],
+                Column[Scalar (0 :+ 0), Scalar (1 :+ 0)]
+            ]
+    collapse = undefined
+
+
+at :: Integral b => a -> Vector a -> (b, b) -> a
+at x y z = fromMaybe x (atM y z)
+
+atM :: Integral b => Vector a -> (b, b) -> Maybe a
+atM (Scalar s) (0, 0) = Just s
+atM (Column (c:cs)) (i, j)
+    | height (Column (c:cs)) > i = let offset = height c in
+                                    if offset > i
+                                    then atM c (i, j)
+                                    else atM (Column cs) (i - offset, j)
+    | otherwise = Nothing
+atM (Row (r:rs)) (i, j)
+    | width (Row (r:rs)) > j = let offset = width r in
+                                    if offset > j
+                                    then atM r (i, j)
+                                    else atM (Row rs) (i, j - offset)
+    | otherwise = Nothing
+atM _ _ = Nothing
+
 con :: Vector a -> Vector a -> Vector a
 con x (Row y) = Row $ x : y
 con x (Column y) = Column $ x : y
 con _ _ = error "Appending to Scalar is prohibited"
+
+append :: Vector a -> Vector a -> Vector a
+append (Row x) (Row y) = Row $ x ++ y
+append (Column x) (Column y) = Column $ x ++ y
+append _ _ = error "Vector direction mismatch"
 
 width :: Integral b => Vector a -> b
 width (Scalar s) = 1
@@ -159,27 +270,6 @@ init :: Vector a -> Vector a
 init (Scalar s) = Scalar s
 init (Row r) = Row $ Prelude.init r
 init (Column c) = Column $ Prelude.init c
-
-atMaybe :: Integral b => Vector a -> (b, b) -> Maybe a
-atMaybe (Scalar s) (0, 0) = Just s
-atMaybe (Column (c:cs)) (i, j)
-    | height (Column (c:cs)) > i = let offset = height c in
-                                    if offset > i
-                                    then atMaybe c (i, j)
-                                    else atMaybe (Column cs) (i - offset, j)
-    | otherwise = Nothing
-
-atMaybe (Row (r:rs)) (i, j)
-    | width (Row (r:rs)) > j = let offset = width r in
-                                    if offset > j
-                                    then atMaybe r (i, j)
-                                    else atMaybe (Row rs) (i, j - offset)
-    | otherwise = Nothing
-
-atMaybe _ _ = Nothing
-
-at :: Integral b => a -> Vector a -> (b, b) -> a
-at x y z = fromMaybe x (atMaybe y z)
 
 dot :: Num a => Vector a -> Vector a -> Vector a
 dot x y = transposeStruct x * y

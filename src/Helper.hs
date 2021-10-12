@@ -1,6 +1,8 @@
 module Helper where
 
 import Data.Either
+import Data.List (sortBy)
+import Data.Function ( on )
 
 integralLog :: (Show a, Integral a, Integral b)
     => a -> a -> Either [Char] b
@@ -15,3 +17,11 @@ integralLog base x
     where 
         y = quot x base
         result = integralLog base y
+
+sortOnFst :: (Ord a) => [(a, b)]
+    -> [(a, b)]
+sortOnFst = sortBy (compare `on` fst)
+
+sortOnSnd :: (Ord b) => [(a, b)]
+    -> [(a, b)]
+sortOnSnd = sortBy (compare `on` snd)

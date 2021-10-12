@@ -25,7 +25,8 @@ source-repository head
 
 library
   exposed-modules:
-      FullState
+      EitherTrans
+      Example
       Helper
       QuantumCircuit
       State
@@ -38,9 +39,11 @@ library
   build-depends:
       QuickCheck
     , base >=4.7 && <5
+    , bifunctors
     , cryptonite
     , hspec
     , random
+    , transformers
   default-language: Haskell2010
 
 executable Qaskell-exe
@@ -54,9 +57,11 @@ executable Qaskell-exe
       Qaskell
     , QuickCheck
     , base >=4.7 && <5
+    , bifunctors
     , cryptonite
     , hspec
     , random
+    , transformers
   default-language: Haskell2010
 
 test-suite Qaskell-test
@@ -71,7 +76,9 @@ test-suite Qaskell-test
       Qaskell
     , QuickCheck
     , base >=4.7 && <5
+    , bifunctors
     , cryptonite
     , hspec
     , random
+    , transformers
   default-language: Haskell2010
