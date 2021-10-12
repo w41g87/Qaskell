@@ -1,6 +1,8 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Vector where
 
@@ -12,9 +14,9 @@ import Data.Complex
 import Data.Biapplicative
 import Helper
 import Data.Either
+import EitherTrans
 
 data Vector a = Scalar a | Row [Vector a] | Column [Vector a]
-    deriving (Show)
 
 -- This Eq implementation ignores structural differences
 instance (Eq a) => Eq (Vector a) where
@@ -78,7 +80,11 @@ instance (Num a) => Semigroup (Vector a) where
 instance (Num a) => Monoid (Vector a) where
     mempty = Scalar 1
 
-instance Tensor Vector where
+instance {-# OVERLAPPING #-} (RealFloat a) => Cmplx (Vector (Complex a)) where
+    conj = fmap conj . transposeStruct
+
+instance (Num a) => Tensor Vector a where
+    -- TODO: norm for matrices
     norm t = (/ (sqrt.getSum $ foldMap (Sum . (**2) . abs) t)) <$> t
     fromList xs dim = go (foldr (con . Scalar) (Column []) xs) dim
         where
@@ -116,14 +122,17 @@ instance Tensor Vector where
                 | otherwise = All False
             go (Scalar _) _ = All True
 
-instance QuantumRegister Vector where
+instance (Floating a, Eq a, Show a) => QuantumRegister Vector a where
+
+    densityOp x = transposeStruct x * x
+
     getProb i v
         | i < 0 || i >= rank v = Left "Index out of bounds"
         | not (isSquare v) = Left "Invalid Quantum Register"
         | otherwise = Right $ bimap getSum getSum $ go i v
         where
-            go 0 v = (foldMap (Sum . (**2). magnitude) (Vector.head v)
-                , foldMap (Sum . (**2). magnitude) (Vector.last v))
+            go 0 v = (foldMap (Sum . (**2). abs) (Vector.head v)
+                , foldMap (Sum . (**2). abs) (Vector.last v))
             go i v = ((<>), (<>)) <<*>> nextH <<*>> nextL
                 where
                     nextH = go (i - 1) (Vector.head v)
@@ -144,10 +153,31 @@ instance QuantumRegister Vector where
         | otherwise = Right . norm $ fromList q 2
         where num = integralLog 2 (length q)
 
+    collapse = undefined
+
+    measure = undefined
+    applyGate = undefined
+    applyGateAll = undefined
+    applyControl = undefined
+
+    illegalPeek (Scalar s) = show s
+    illegalPeek q = go 0 0
+        where
+            w = width q
+            h = height q
+            go i j
+                | i == h = mempty
+                | j == w = "\t|\n" ++ go (i + 1) 0
+                | j == 0 = "|\t" <> current <> "\t" <> go i (j + 1)
+                | otherwise = current <> "\t" <> go i (j + 1)
+                where
+                    current = maybe "null" show (atM q (i, j))
+
+instance (RealFloat a, Show a) => Gates Vector (Complex a) where
     pauliX = Row [
-                Column [Scalar (0 :+ 0), Scalar (1 :+ 0)],
-                Column [Scalar (1 :+ 0), Scalar (0 :+ 0)]
-            ]
+            Column [Scalar (0 :+ 0), Scalar (1 :+ 0)],
+            Column [Scalar (1 :+ 0), Scalar (0 :+ 0)]
+        ]
 
     pauliY = Row [
                 Column [Scalar (0 :+ 0), Scalar (0 :+ 1)],
@@ -178,8 +208,6 @@ instance QuantumRegister Vector where
                 Column[Scalar (0 :+ 0), Scalar (0 :+ 0)],
                 Column[Scalar (0 :+ 0), Scalar (1 :+ 0)]
             ]
-    collapse = undefined
-
 
 at :: Integral b => a -> Vector a -> (b, b) -> a
 at x y z = fromMaybe x (atM y z)

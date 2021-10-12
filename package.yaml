@@ -30,6 +30,11 @@ dependencies:
 
 library:
   source-dirs: src
+  exposed-modules: 
+    - Legacy.Base
+    - Legacy.Tensor
+    - Tensor
+    - Vector
 
 executables:
   Qaskell-exe:

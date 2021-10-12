@@ -25,14 +25,15 @@ source-repository head
 
 library
   exposed-modules:
-      EitherTrans
-      Example
-      Helper
-      QuantumCircuit
-      State
+      Legacy.Base
+      Legacy.Tensor
       Tensor
       Vector
   other-modules:
+      EitherTrans
+      Helper
+      QuantumCircuit
+      State
       Paths_Qaskell
   hs-source-dirs:
       src

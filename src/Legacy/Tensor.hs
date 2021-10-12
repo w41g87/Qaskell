@@ -1,4 +1,4 @@
-module Tensor_non_recursive where
+module Legacy.Tensor {-# DEPRECATED "Use Vector and Tensor instead" #-} where
 
 newtype Tensor' a = Tensor' [a]
     deriving(Show, Eq)

@@ -1,4 +1,4 @@
-module Qaskell_base where
+module Legacy.Base {-# DEPRECATED "Use Vector instead" #-} where
 
 import Data.Complex
 import Data.Either
@@ -114,8 +114,8 @@ getQubitState x (StateVector q)
 -- Gate to Apply -> Control Bit Index -> Application Bit Index -> Circuit To Apply
 applyControlToQubits :: TransformTensor -> Int -> Int -> StateVector -> Either String StateVector
 applyControlToQubits g m n (StateVector q)
-    | m < n = t m n mask1 g >>= (`applyTensorToState` (StateVector q))
-    | m > n = t n m g mask1 >>= (`applyTensorToState` (StateVector q))
+    | m < n = t m n mask1 g >>= (`applyTensorToState` StateVector q)
+    | m > n = t n m g mask1 >>= (`applyTensorToState` StateVector q)
     | otherwise = Left "Control and Application Qubit Cannot be Identical"
     where
         zeroMask = numQubits >>= flip (genTensor mask0) m
@@ -124,7 +124,7 @@ applyControlToQubits g m n (StateVector q)
         t i j fstGate sndGate = doubleBindEither (fmap mergeTensor fstTensor <*> sndTensor) zeroMask tensorAdd
             where
                 fstTensor = genTensor fstGate i i
-                sndTensor = numQubits >>= (flip (genTensor sndGate) (j - i)) . (flip (-) i)
+                sndTensor = numQubits >>= flip (genTensor sndGate) (j - i) . flip (-) i
 
 pauliX :: TransformTensor
 pauliX = TransformTensor [[0 :+ 0, 1 :+ 0],
@@ -154,15 +154,15 @@ mask1 :: TransformTensor
 mask1 = TransformTensor [[0 :+ 0, 0 :+ 0],
                     [0 :+ 0, 1 :+ 0]]
 
-main :: IO()
-main = print result
-    where q0 = initQubit0
-          crt = mergeState q0 q0
-          flip1 = applyGateToQubit hadamard 1 crt
-          flip2 = flip1 >>= applyControlToQubits pauliY 1 2
-          --result = flip2 >>= (getQubitState 2)
-          result = TransformTensor [[0 :+ 0, 0 :+ 0],
-                                    [0 :+ 0, 1 :+ 0]]
+-- main :: IO()
+-- main = print result
+--     where q0 = initQubit0
+--           crt = mergeState q0 q0
+--           flip1 = applyGateToQubit hadamard 1 crt
+--           flip2 = flip1 >>= applyControlToQubits pauliY 1 2
+--           --result = flip2 >>= (getQubitState 2)
+--           result = TransformTensor [[0 :+ 0, 0 :+ 0],
+--                                     [0 :+ 0, 1 :+ 0]]
 
 
 -- Linear algebra versions
