@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
-module QuantumCircuit where
+module Legacy.QuantumCircuit where
 
 import Data.Complex
 import Data.Either

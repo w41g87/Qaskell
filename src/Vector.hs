@@ -9,12 +9,10 @@ module Vector where
 import Tensor
 import Data.Monoid
 import Data.Maybe
-import Data.Bifunctor
 import Data.Complex
-import Data.Biapplicative
 import Helper
 import Data.Either
-import EitherTrans
+import System.Random
 
 data Vector a = Scalar a | Row [Vector a] | Column [Vector a]
 
@@ -53,7 +51,7 @@ instance Num a => Num (Vector a) where
     Column x + (Column y) = Column $ zipWith (+) x y
     Scalar x + y = fmap (+ x) y
     x + (Scalar y) = fmap (+ y) x
-    _+_ = error "Vector Addition: Direction mismatch"
+    _+_ = error "Vector Addition: Dimension mismatch"
     Scalar x * y = fmap (* x) y
     x * Scalar y = fmap (* y) x
     Row x * (Column y) = getSum $ foldMap Sum $ zipWith (*) x y
@@ -80,10 +78,11 @@ instance (Num a) => Semigroup (Vector a) where
 instance (Num a) => Monoid (Vector a) where
     mempty = Scalar 1
 
-instance {-# OVERLAPPING #-} (RealFloat a) => Cmplx (Vector (Complex a)) where
+instance (Cmplx a) => Cmplx (Vector a) where
     conj = fmap conj . transposeStruct
 
-instance (Num a) => Tensor Vector a where
+instance (Num a, Cmplx a) => Tensor Vector a where
+    inner = dot
     -- TODO: norm for matrices
     norm t = (/ (sqrt.getSum $ foldMap (Sum . (**2) . abs) t)) <$> t
     fromList xs dim = go (foldr (con . Scalar) (Column []) xs) dim
@@ -122,21 +121,11 @@ instance (Num a) => Tensor Vector a where
                 | otherwise = All False
             go (Scalar _) _ = All True
 
-instance (Floating a, Eq a, Show a) => QuantumRegister Vector a where
+    conjTr = conj
+
+instance (Floating a, Eq a, Show a, Ord a, UniformRange a, Cmplx a) => QuantumRegister Vector a where
 
     densityOp x = transposeStruct x * x
-
-    getProb i v
-        | i < 0 || i >= rank v = Left "Index out of bounds"
-        | not (isSquare v) = Left "Invalid Quantum Register"
-        | otherwise = Right $ bimap getSum getSum $ go i v
-        where
-            go 0 v = (foldMap (Sum . (**2). abs) (Vector.head v)
-                , foldMap (Sum . (**2). abs) (Vector.last v))
-            go i v = ((<>), (<>)) <<*>> nextH <<*>> nextL
-                where
-                    nextH = go (i - 1) (Vector.head v)
-                    nextL = go (i - 1) (Vector.last v)
 
     initQubit zero one
         | abs zero ** 2 + abs one ** 2 == 1 = Right $ fromList [zero, one] 2
@@ -153,13 +142,6 @@ instance (Floating a, Eq a, Show a) => QuantumRegister Vector a where
         | otherwise = Right . norm $ fromList q 2
         where num = integralLog 2 (length q)
 
-    collapse = undefined
-
-    measure = undefined
-    applyGate = undefined
-    applyGateAll = undefined
-    applyControl = undefined
-
     illegalPeek (Scalar s) = show s
     illegalPeek q = go 0 0
         where
@@ -173,7 +155,45 @@ instance (Floating a, Eq a, Show a) => QuantumRegister Vector a where
                 where
                     current = maybe "null" show (atM q (i, j))
 
-instance (RealFloat a, Show a) => Gates Vector (Complex a) where
+    subSystem lst q
+        | getAny $ foldMap (Any . (\ x -> x >= rank q || x < 0)) lst = Left "Index out of bounds"
+        | not (isSquare q) = Left "Invalid Quantum Register"
+        | otherwise = Right . fmap sqrt $ go lst (fmap (\x -> conj x * x) q)
+        where
+            go [] (Scalar s) = Scalar s
+            go is (Row r)
+                | null is || Prelude.head is /= 0 = foldr (+) (Scalar 0) preSum
+                | otherwise = Row $ map (go $ fmap (flip (-) 1) (Prelude.tail is)) r
+                where
+                    preSum = map (go $ fmap (flip (-) 1) is) r
+            go is (Column c)
+                | null is || Prelude.head is /= 0 = foldr (+) (Scalar 0) preSum
+                | otherwise = Column $ map (go $ fmap (flip (-) 1) (Prelude.tail is)) c
+                where
+                    preSum = map (go $ fmap (flip (-) 1) is) c
+            go _ _ = error "Exceptions not handled by subSystem function"
+
+    isEntangled lst q = do
+            reduced <- reducedDensity lst q
+            return $ abs (trace (reduced * reduced) - 1) > 1e-13
+
+
+    mask0 = Row [
+                Column[1, 0],
+                Column[0, 0]
+            ]
+
+    mask1 = Row [
+                Column[0, 0],
+                Column[0, 1]
+            ]
+
+    pauliId = Row [
+                Column [1, 0],
+                Column [0, 1]
+            ]
+
+instance (RealFloat a, Show a, UniformRange a) => Gates Vector (Complex a) where
     pauliX = Row [
             Column [Scalar (0 :+ 0), Scalar (1 :+ 0)],
             Column [Scalar (1 :+ 0), Scalar (0 :+ 0)]
@@ -189,25 +209,13 @@ instance (RealFloat a, Show a) => Gates Vector (Complex a) where
                 Column [Scalar (0 :+ 0), Scalar ((-1) :+ 0)]
             ]
 
-    pauliId = Row [
-                Column [Scalar (1 :+ 0), Scalar (0 :+ 0)],
-                Column [Scalar (0 :+ 0), Scalar (1 :+ 0)]
-            ]
+
 
     hadamard = Row [
                 Column [Scalar (1 / sqrt 2 :+ 0), Scalar (1 / sqrt 2 :+ 0)],
                 Column [Scalar (1 / sqrt 2 :+ 0), Scalar ((-1) / sqrt 2 :+ 0)]
             ]
 
-    mask0 = Row [
-                Column[Scalar (1 :+ 0), Scalar (0 :+ 0)],
-                Column[Scalar (0 :+ 0), Scalar (0 :+ 0)]
-            ]
-
-    mask1 = Row [
-                Column[Scalar (0 :+ 0), Scalar (0 :+ 0)],
-                Column[Scalar (0 :+ 0), Scalar (1 :+ 0)]
-            ]
 
 at :: Integral b => a -> Vector a -> (b, b) -> a
 at x y z = fromMaybe x (atM y z)
@@ -302,6 +310,38 @@ init (Column c) = Column $ Prelude.init c
 dot :: Num a => Vector a -> Vector a -> Vector a
 dot x y = transposeStruct x * y
 
+reducedDensity :: (Num a, Cmplx a, Floating a) => [Int] -> Vector a -> Either String (Vector a)
+reducedDensity lst q
+    | getAny $ foldMap (Any . (\ x -> x >= rank q || x < 0)) lst = Left "Index out of bounds"
+    | not (isSquare q) = Left "Invalid Quantum Register"
+    | otherwise = Right $ go lst q (transposeStruct q)
+    where
+        go [] (Scalar s) (Scalar t) = Scalar (s * t)
+        go is (Column c) (Row r)
+            | null is || Prelude.head is /= 0 = (getSum . foldMap Sum) $ zipWith (go (flip (-) 1 <$> is)) c r
+            | otherwise = Row $ map (Column . ($ c) . (\ b a -> map (\ x -> go (flip (-) 1 <$> Prelude.tail is) x b) a)) r
+        go _ _ _ = error "Input is not a valid statevector"
+
+
+isColumn :: Vector a -> Bool
+isColumn (Column _) = True 
+isColumn _ = False
+
+isRow :: Vector a -> Bool
+isRow (Row _) = True
+isRow _ = False
+
+isScalar :: Vector a -> Bool
+isScalar (Scalar _) = True 
+isScalar _ = False 
+
+trace :: (Num a) => Vector a -> a
+trace (Scalar s) = s
+trace (Row r) = (getSum . foldMap Sum) $ zipWith go [0, 1 ..] r
+    where
+        go i (Row r) = trace (r !! i)
+        go i (Column c) = trace (c !! i)
+        go i (Scalar s) = s
 {-
     Tensor type:
     All one-dimensional tensors are column vectors. This means matrices,
